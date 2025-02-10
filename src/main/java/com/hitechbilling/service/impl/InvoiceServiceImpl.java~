@@ -132,7 +132,6 @@ public class InvoiceServiceImpl implements InvoiceService {
 
     @Override
     public Boolean deleteInvoices() {
-        invoiceRepository.deleteAll();
-        return true;
+        return invoiceRepository.deleteAll();
     }
 }

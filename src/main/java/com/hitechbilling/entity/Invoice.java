@@ -22,8 +22,8 @@ public class Invoice {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long invoiceId;
-    private LocalDate invoiceDate;
-    private LocalDate dueDate;
+    private String invoiceDate;
+    private String dueDate;
     private String customerName;
     private String customerAddress;
     private String customerMobile;

@@ -11,4 +11,6 @@ public interface InvoiceService {
     List<Invoice> getInvoices();
     Boolean updateInvoice(Invoice invoice, Long id);
     Boolean deleteInvoice(Long id);
+
+    Boolean deleteInvoices();
 }

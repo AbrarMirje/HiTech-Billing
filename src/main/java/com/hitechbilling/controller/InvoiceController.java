@@ -56,4 +56,14 @@ public class InvoiceController {
             return ResponseEntity.ok(new CustomResponse(false, "Invoice not deleted!"));
         }
     }
+
+    @DeleteMapping("/delete-invoices")
+    public ResponseEntity<CustomResponse> deleteInvoices() {
+        Boolean isDeleted = invoiceService.deleteInvoices();
+        if (isDeleted){
+            return ResponseEntity.ok(new CustomResponse(true, "Invoices deleted successfully!"));
+        } else {
+            return ResponseEntity.ok(new CustomResponse(false, "Invoices not deleted!"));
+        }
+    }
 }
