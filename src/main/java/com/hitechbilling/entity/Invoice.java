@@ -22,6 +22,7 @@ public class Invoice {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long invoiceId;
+    private String gstNumber;
     private String invoiceDate;
     private String dueDate;
     private String customerName;
@@ -29,11 +30,16 @@ public class Invoice {
     private String customerMobile;
     private String termsAndConditions;
     private String note;
-    private Double taxableAmount;
     private Double totalAmount;
     private Double receivedAmount;
     private Double pendingAmount;
     private String totalAmountInWords;
+    private Double sgst;
+    private Double cgst;
+    private Double igst;
+    private Double discountAmount;
+    private Double discountAmountPercentage;
+
 
     @OneToMany(mappedBy = "invoice", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonManagedReference

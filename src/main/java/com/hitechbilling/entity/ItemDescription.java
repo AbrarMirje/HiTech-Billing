@@ -18,9 +18,12 @@ public class ItemDescription {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long descriptionId;
     private String description;
+    private String size;
     private Integer squareFt;
     private Integer quantity;
     private Double rate;
+    private Double discountAmount;
+    private Double discountAmountPercentage;
     private Double amount;
 
     @ManyToOne

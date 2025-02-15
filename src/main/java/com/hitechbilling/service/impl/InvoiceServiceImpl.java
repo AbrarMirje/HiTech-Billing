@@ -10,6 +10,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
@@ -18,21 +21,45 @@ public class InvoiceServiceImpl implements InvoiceService {
     private final InvoiceRepository invoiceRepository;
 
     @Override
-    @Transactional
     public Invoice createInvoice(Invoice invoice) {
-
         double totalAmount = 0.0;
 
-        for (ItemDescription item : invoice.getDescriptions()){
-            item.setAmount(item.getQuantity() * item.getRate());
+        for (ItemDescription item : invoice.getDescriptions()) {
             item.setInvoice(invoice);
 
-            totalAmount += item.getAmount();
+            // Size conversion logic
+            int squareFeet = convertToSquareFeet(item.getSize());
+            item.setSquareFt(squareFeet);
+
+            // Amount Calculation
+            double originalItemAmount = item.getQuantity() * item.getRate();
+            double itemAmount = originalItemAmount;
+
+            // Discount Handling
+            if (item.getDiscountAmount() != null && item.getDiscountAmount() > 0) {
+                double discountAmount = item.getDiscountAmount();
+                item.setDiscountAmountPercentage((discountAmount / originalItemAmount) * 100);
+                itemAmount -= discountAmount;
+            }
+
+            item.setAmount(itemAmount);
+            totalAmount += itemAmount;
         }
 
-        invoice.setTaxableAmount(totalAmount);
+        // Invoice Level Discount
+        if (invoice.getDiscountAmount() != null && invoice.getDiscountAmount() > 0) {
+            double discountAmount = invoice.getDiscountAmount();
+            invoice.setDiscountAmountPercentage((discountAmount / totalAmount) * 100);
+            totalAmount -= discountAmount;
+        }
+
+        // GST Calculation
+        double gstAmount = calculateGST(invoice, totalAmount);
+        totalAmount += gstAmount;
+
+        // Final Amounts
         invoice.setTotalAmount(totalAmount);
-        invoice.setPendingAmount(invoice.getTotalAmount() - invoice.getReceivedAmount());
+        invoice.setPendingAmount(totalAmount - Optional.ofNullable(invoice.getReceivedAmount()).orElse(0.0));
 
         return invoiceRepository.save(invoice);
     }
@@ -40,9 +67,7 @@ public class InvoiceServiceImpl implements InvoiceService {
 
     @Override
     public Invoice getInvoice(Long id) {
-        return invoiceRepository.findById(id).orElseThrow(
-                () -> new InvoiceNotFoundException("Invoice not found with id " + id)
-        );
+        return invoiceRepository.findById(id).orElseThrow(() -> new InvoiceNotFoundException("Invoice not found with id " + id));
     }
 
     @Override
@@ -53,81 +78,118 @@ public class InvoiceServiceImpl implements InvoiceService {
     @Override
     @Transactional
     public Boolean updateInvoice(Invoice invoice, Long id) {
-        Invoice oldInvoice = invoiceRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Invoice not found with ID: " + id));
+        Invoice oldInvoice = getInvoice(id);
 
-        if (invoice.getInvoiceDate() != null) oldInvoice.setInvoiceDate(invoice.getInvoiceDate());
-        if (invoice.getDueDate() != null) oldInvoice.setDueDate(invoice.getDueDate());
-        if (invoice.getCustomerName() != null) oldInvoice.setCustomerName(invoice.getCustomerName());
-        if (invoice.getCustomerAddress() != null) oldInvoice.setCustomerAddress(invoice.getCustomerAddress());
-        if (invoice.getCustomerMobile() != null) oldInvoice.setCustomerMobile(invoice.getCustomerMobile());
-        if (invoice.getTermsAndConditions() != null) oldInvoice.setTermsAndConditions(invoice.getTermsAndConditions());
-        if (invoice.getNote() != null) oldInvoice.setNote(invoice.getNote());
-        if (invoice.getTotalAmountInWords() != null) oldInvoice.setTotalAmountInWords(invoice.getTotalAmountInWords());
+        oldInvoice.setInvoiceDate(invoice.getInvoiceDate());
+        oldInvoice.setDueDate(invoice.getDueDate());
+        oldInvoice.setCustomerName(invoice.getCustomerName());
+        oldInvoice.setCustomerAddress(invoice.getCustomerAddress());
+        oldInvoice.setCustomerMobile(invoice.getCustomerMobile());
+        oldInvoice.setTermsAndConditions(invoice.getTermsAndConditions());
+        oldInvoice.setNote(invoice.getNote());
+        oldInvoice.setTotalAmountInWords(invoice.getTotalAmountInWords());
 
         List<ItemDescription> oldDescriptions = oldInvoice.getDescriptions();
+        double totalAmount = 0.0;
 
         if (invoice.getDescriptions() != null && !invoice.getDescriptions().isEmpty()) {
-            if (oldDescriptions.size() != invoice.getDescriptions().size()) {
-                throw new IllegalArgumentException("Mismatch in the number of descriptions. Cannot update.");
-            }
-
             for (int i = 0; i < invoice.getDescriptions().size(); i++) {
                 ItemDescription newItem = invoice.getDescriptions().get(i);
-                ItemDescription existingItem = oldDescriptions.get(i);
 
+                ItemDescription existingItem = (i < oldDescriptions.size())
+                        ? oldDescriptions.get(i)
+                        : new ItemDescription();
+
+                existingItem.setInvoice(oldInvoice);
                 existingItem.setDescription(newItem.getDescription());
-                existingItem.setSquareFt(newItem.getSquareFt());
+                existingItem.setSize(newItem.getSize());
                 existingItem.setQuantity(newItem.getQuantity());
                 existingItem.setRate(newItem.getRate());
 
-                double itemAmount = newItem.getQuantity() * newItem.getRate();
+                // Size conversion logic
+                int squareFeet = convertToSquareFeet(newItem.getSize());
+                existingItem.setSquareFt(squareFeet);
+
+                double originalItemAmount = newItem.getQuantity() * newItem.getRate();
+                double itemAmount = originalItemAmount;
+
+                // Discount Handling
+                double discountAmount = Optional.ofNullable(newItem.getDiscountAmount()).orElse(0.0);
+                existingItem.setDiscountAmount(discountAmount);
+
+                if (discountAmount > 0) {
+                    double discountPercentage = (discountAmount / originalItemAmount) * 100;
+                    existingItem.setDiscountAmountPercentage(discountPercentage);
+                    itemAmount -= discountAmount;
+                }
+
                 existingItem.setAmount(itemAmount);
+                totalAmount += itemAmount;
+
+                if (i >= oldDescriptions.size()) {
+                    oldDescriptions.add(existingItem);
+                }
             }
         }
 
-        double totalAmount = oldDescriptions.stream()
-                .mapToDouble(ItemDescription::getAmount)
-                .sum();
+        // Invoice Level Discount
+        double invoiceDiscountAmount = Optional.ofNullable(invoice.getDiscountAmount()).orElse(0.0);
+        oldInvoice.setDiscountAmount(invoiceDiscountAmount);
+
+        if (invoiceDiscountAmount > 0) {
+            double discountPercentage = (invoiceDiscountAmount / totalAmount) * 100;
+            oldInvoice.setDiscountAmountPercentage(discountPercentage);
+            totalAmount -= invoiceDiscountAmount;
+        }
+
+        // GST Calculation
+        double gstAmount = calculateGST(invoice, totalAmount);
+        totalAmount += gstAmount;
+
+        // 🛠 **Fix Received Amount Calculation**
+        double updatedReceivedAmount = Optional.ofNullable(oldInvoice.getReceivedAmount()).orElse(0.0)
+                + Optional.ofNullable(invoice.getReceivedAmount()).orElse(0.0);
+        oldInvoice.setReceivedAmount(updatedReceivedAmount);
+
+        // Update Pending Amount
+        oldInvoice.setPendingAmount(totalAmount - updatedReceivedAmount);
+
         oldInvoice.setTotalAmount(totalAmount);
-
-        oldInvoice.setTaxableAmount(totalAmount);
-
-        if (invoice.getReceivedAmount() != null) {
-            double newReceivedAmount = oldInvoice.getReceivedAmount() + invoice.getReceivedAmount();
-
-            if (newReceivedAmount > totalAmount) {
-                throw new IllegalArgumentException("Received amount cannot be greater than total amount.");
-            }
-
-            oldInvoice.setReceivedAmount(newReceivedAmount);
-        }
-
-        double pendingAmount = totalAmount - oldInvoice.getReceivedAmount();
-
-        if (pendingAmount < 0) {
-            throw new IllegalArgumentException("Pending amount cannot be negative. Check received amount.");
-        }
-
-        oldInvoice.setPendingAmount(pendingAmount);
 
         invoiceRepository.save(oldInvoice);
         return true;
     }
 
+    private double calculateGST(Invoice invoice, double totalAmount) {
+        if (invoice.getIgst() != null && invoice.getIgst() > 0) {
+            invoice.setCgst(0.0);
+            invoice.setSgst(0.0);
+            return (totalAmount * invoice.getIgst()) / 100;
+        } else {
+            invoice.setIgst(0.0);
+            return ((totalAmount * Optional.ofNullable(invoice.getSgst()).orElse(0.0)) / 100)
+                    + ((totalAmount * Optional.ofNullable(invoice.getCgst()).orElse(0.0)) / 100);
+        }
+    }
+
+    private int convertToSquareFeet(String size) {
+        Pattern pattern = Pattern.compile("(\\d+)");
+        Matcher matcher = pattern.matcher(size);
+        int value = matcher.find() ? Integer.parseInt(matcher.group(1)) : 0;
+
+        if (size.toUpperCase().contains("MM")) {
+            return (int) Math.round(value * 0.010764);
+        } else if (size.toUpperCase().contains("INCH")) {
+            return (int) Math.round(value * 0.083333);
+        }
+        return value;
+    }
 
     @Override
     public Boolean deleteInvoice(Long id) {
-        try {
-            invoiceRepository.findById(id).orElseThrow(
-                    () -> new InvoiceNotFoundException("Invoice not found with id " + id)
-            );
-
-            invoiceRepository.deleteById(id);
-            return true;
-        } catch (InvoiceNotFoundException e){
-            throw new RuntimeException();
-        }
+        invoiceRepository.findById(id).orElseThrow(() -> new InvoiceNotFoundException("Invoice not found with id " + id));
+        invoiceRepository.deleteById(id);
+        return true;
     }
 
     @Override
